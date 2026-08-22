@@ -1,14 +1,17 @@
 // --------------------------------------------------
 // WEATHER SERVICE
 // --------------------------------------------------
-
+//
 // This module:
 // 1. Fetches live weather data from Open-Meteo.
 // 2. Calculates rainfall for the previous 6 hours.
 // 3. Calculates rainfall for the previous 24 hours.
 // 4. Calculates rainfall forecast for the next 6 hours.
 // 5. Calculates rainfall forecast for the next 24 hours.
-// 6. Converts the data into ML-ready inputs.
+// 6. Creates 6-hour rainfall intervals.
+// 7. Returns environmental parameters for ML prediction.
+//
+// --------------------------------------------------
 
 const { execFile } = require("child_process");
 
@@ -21,8 +24,34 @@ function getWeatherData(location) {
 
     return new Promise((resolve, reject) => {
 
+        // --------------------------------------------------
+        // VALIDATE LOCATION
+        // --------------------------------------------------
+
+        if (!location) {
+
+            return reject(
+                new Error("Location is required.")
+            );
+
+        }
+
         const latitude = location.latitude;
         const longitude = location.longitude;
+
+
+        if (
+            latitude === undefined ||
+            longitude === undefined
+        ) {
+
+            return reject(
+                new Error(
+                    "Location latitude or longitude is missing."
+                )
+            );
+
+        }
 
 
         // --------------------------------------------------
@@ -41,7 +70,13 @@ function getWeatherData(location) {
             `soil_moisture_0_to_7cm` +
             `&hourly=rain,precipitation` +
             `&forecast_days=2` +
+            `&past_days=1` +
             `&timezone=auto`;
+
+
+        console.log(
+            `Fetching Open-Meteo data for coordinates: ${latitude}, ${longitude}`
+        );
 
 
         // --------------------------------------------------
@@ -59,7 +94,7 @@ function getWeatherData(location) {
 
             {
                 timeout: 20000,
-                maxBuffer: 1024 * 1024
+                maxBuffer: 5 * 1024 * 1024
             },
 
             (error, stdout, stderr) => {
@@ -83,7 +118,9 @@ function getWeatherData(location) {
 
                     const data = JSON.parse(stdout);
 
-                    resolve(data);
+                    resolve(
+                        processWeatherData(data)
+                    );
 
                 } catch (parseError) {
 
@@ -94,9 +131,48 @@ function getWeatherData(location) {
 
                     reject(parseError);
                 }
+
             }
         );
+
     });
+
+}
+
+
+
+// --------------------------------------------------
+// HELPER: SAFE NUMBER
+// --------------------------------------------------
+
+function safeNumber(value) {
+
+    if (
+        value === null ||
+        value === undefined ||
+        Number.isNaN(Number(value))
+    ) {
+
+        return 0;
+
+    }
+
+    return Number(value);
+
+}
+
+
+
+// --------------------------------------------------
+// HELPER: ROUND TO 2 DECIMAL PLACES
+// --------------------------------------------------
+
+function round(value) {
+
+    return Number(
+        safeNumber(value).toFixed(2)
+    );
+
 }
 
 
@@ -107,6 +183,31 @@ function getWeatherData(location) {
 
 function processWeatherData(weatherData) {
 
+    // --------------------------------------------------
+    // VALIDATE RESPONSE
+    // --------------------------------------------------
+
+    if (!weatherData) {
+
+        throw new Error(
+            "Empty response received from Open-Meteo."
+        );
+
+    }
+
+
+    if (
+        !weatherData.current ||
+        !weatherData.hourly
+    ) {
+
+        throw new Error(
+            "Invalid Open-Meteo response."
+        );
+
+    }
+
+
     const current = weatherData.current;
     const hourly = weatherData.hourly;
 
@@ -115,26 +216,45 @@ function processWeatherData(weatherData) {
     // CURRENT TIME
     // --------------------------------------------------
 
-    const currentTime = new Date(current.time);
+    const currentTime =
+        new Date(current.time);
 
 
     // --------------------------------------------------
+    // HOURLY ARRAYS
+    // --------------------------------------------------
+
+    const hourlyTimes =
+        hourly.time || [];
+
+    const hourlyPrecipitation =
+        hourly.precipitation || [];
+
+
+
+    // ==================================================
     // RAINFALL - LAST 6 HOURS
-    // --------------------------------------------------
+    // ==================================================
 
     let rainfallLast6Hours = 0;
 
 
-    for (let i = 0; i < hourly.time.length; i++) {
+    for (
+        let i = 0;
+        i < hourlyTimes.length;
+        i++
+    ) {
 
-        const hourTime = new Date(hourly.time[i]);
+        const hourTime =
+            new Date(hourlyTimes[i]);
+
 
         const differenceHours =
-            (currentTime - hourTime) / (1000 * 60 * 60);
+            (
+                currentTime - hourTime
+            ) /
+            (1000 * 60 * 60);
 
-
-        // Include rainfall from the previous 6 hours
-        // and the current hour.
 
         if (
             differenceHours >= 0 &&
@@ -142,29 +262,39 @@ function processWeatherData(weatherData) {
         ) {
 
             rainfallLast6Hours +=
-                hourly.precipitation[i] || 0;
+                safeNumber(
+                    hourlyPrecipitation[i]
+                );
+
         }
+
     }
 
 
 
-    // --------------------------------------------------
+    // ==================================================
     // RAINFALL - LAST 24 HOURS
-    // --------------------------------------------------
+    // ==================================================
 
     let rainfallLast24Hours = 0;
 
 
-    for (let i = 0; i < hourly.time.length; i++) {
+    for (
+        let i = 0;
+        i < hourlyTimes.length;
+        i++
+    ) {
 
-        const hourTime = new Date(hourly.time[i]);
+        const hourTime =
+            new Date(hourlyTimes[i]);
+
 
         const differenceHours =
-            (currentTime - hourTime) / (1000 * 60 * 60);
+            (
+                currentTime - hourTime
+            ) /
+            (1000 * 60 * 60);
 
-
-        // Include rainfall from the previous 24 hours
-        // and the current hour.
 
         if (
             differenceHours >= 0 &&
@@ -172,30 +302,39 @@ function processWeatherData(weatherData) {
         ) {
 
             rainfallLast24Hours +=
-                hourly.precipitation[i] || 0;
+                safeNumber(
+                    hourlyPrecipitation[i]
+                );
+
         }
+
     }
 
 
 
-    // --------------------------------------------------
+    // ==================================================
     // RAINFALL FORECAST - NEXT 6 HOURS
-    // --------------------------------------------------
+    // ==================================================
 
     let rainfallForecastNext6Hours = 0;
 
 
-    for (let i = 0; i < hourly.time.length; i++) {
+    for (
+        let i = 0;
+        i < hourlyTimes.length;
+        i++
+    ) {
 
-        const hourTime = new Date(hourly.time[i]);
+        const hourTime =
+            new Date(hourlyTimes[i]);
+
 
         const differenceHours =
-            (hourTime - currentTime) /
+            (
+                hourTime - currentTime
+            ) /
             (1000 * 60 * 60);
 
-
-        // Only future values between 0 and 6 hours
-        // are included.
 
         if (
             differenceHours > 0 &&
@@ -203,30 +342,39 @@ function processWeatherData(weatherData) {
         ) {
 
             rainfallForecastNext6Hours +=
-                hourly.precipitation[i] || 0;
+                safeNumber(
+                    hourlyPrecipitation[i]
+                );
+
         }
+
     }
 
 
 
-    // --------------------------------------------------
+    // ==================================================
     // RAINFALL FORECAST - NEXT 24 HOURS
-    // --------------------------------------------------
+    // ==================================================
 
     let rainfallForecastNext24Hours = 0;
 
 
-    for (let i = 0; i < hourly.time.length; i++) {
+    for (
+        let i = 0;
+        i < hourlyTimes.length;
+        i++
+    ) {
 
-        const hourTime = new Date(hourly.time[i]);
+        const hourTime =
+            new Date(hourlyTimes[i]);
+
 
         const differenceHours =
-            (hourTime - currentTime) /
+            (
+                hourTime - currentTime
+            ) /
             (1000 * 60 * 60);
 
-
-        // Only future values between 0 and 24 hours
-        // are included.
 
         if (
             differenceHours > 0 &&
@@ -234,97 +382,291 @@ function processWeatherData(weatherData) {
         ) {
 
             rainfallForecastNext24Hours +=
-                hourly.precipitation[i] || 0;
+                safeNumber(
+                    hourlyPrecipitation[i]
+                );
+
         }
+
     }
 
 
 
-    // --------------------------------------------------
-    // SOIL MOISTURE
-    // --------------------------------------------------
-
-    // Open-Meteo provides soil moisture as m³/m³.
+    // ==================================================
+    // 6-HOUR RAINFALL INTERVALS
+    // ==================================================
+    //
+    // The hourly precipitation data is grouped into
+    // consecutive 6-hour periods.
     //
     // Example:
-    // 0.382 → 38.2 %
+    //
+    // 00:00 - 06:00
+    // 06:00 - 12:00
+    // 12:00 - 18:00
+    // 18:00 - 00:00
+    //
+    // These intervals are important because the ML
+    // training data should use the same time structure.
+    //
+    // ==================================================
 
-    const soilMoisture =
-        current.soil_moisture_0_to_7cm * 100;
+    const rainfall6HourIntervals = [];
 
+    let intervalStart = null;
+    let intervalEnd = null;
+    let intervalRainfall = 0;
+
+
+    for (
+        let i = 0;
+        i < hourlyTimes.length;
+        i++
+    ) {
+
+        const hourTime =
+            new Date(hourlyTimes[i]);
+
+
+        // --------------------------------------------------
+        // Determine the beginning of the 6-hour block
+        // --------------------------------------------------
+
+        const blockHour =
+            Math.floor(
+                hourTime.getHours() / 6
+            ) * 6;
+
+
+        const blockStart =
+            new Date(hourTime);
+
+        blockStart.setHours(
+            blockHour,
+            0,
+            0,
+            0
+        );
+
+
+        const blockEnd =
+            new Date(blockStart);
+
+        blockEnd.setHours(
+            blockStart.getHours() + 6
+        );
+
+
+        // --------------------------------------------------
+        // Start first interval
+        // --------------------------------------------------
+
+        if (intervalStart === null) {
+
+            intervalStart =
+                blockStart;
+
+            intervalEnd =
+                blockEnd;
+
+            intervalRainfall = 0;
+
+        }
+
+
+        // --------------------------------------------------
+        // New 6-hour interval
+        // --------------------------------------------------
+
+        if (
+            blockStart.getTime() !==
+            intervalStart.getTime()
+        ) {
+
+            rainfall6HourIntervals.push({
+
+                start:
+                    intervalStart.toISOString(),
+
+                end:
+                    intervalEnd.toISOString(),
+
+                rainfall:
+                    round(intervalRainfall)
+
+            });
+
+
+            intervalStart =
+                blockStart;
+
+            intervalEnd =
+                blockEnd;
+
+            intervalRainfall = 0;
+
+        }
+
+
+        // --------------------------------------------------
+        // Add hourly rainfall
+        // --------------------------------------------------
+
+        intervalRainfall +=
+            safeNumber(
+                hourlyPrecipitation[i]
+            );
+
+    }
 
 
     // --------------------------------------------------
-    // ROUND FORECAST VALUES
+    // ADD FINAL INTERVAL
     // --------------------------------------------------
 
-    // Keep the response clean and avoid long
-    // floating-point values.
+    if (intervalStart !== null) {
 
-    rainfallLast6Hours =
-        Number(rainfallLast6Hours.toFixed(2));
+        rainfall6HourIntervals.push({
 
-    rainfallLast24Hours =
-        Number(rainfallLast24Hours.toFixed(2));
+            start:
+                intervalStart.toISOString(),
 
-    rainfallForecastNext6Hours =
-        Number(rainfallForecastNext6Hours.toFixed(2));
+            end:
+                intervalEnd.toISOString(),
 
-    rainfallForecastNext24Hours =
-        Number(rainfallForecastNext24Hours.toFixed(2));
+            rainfall:
+                round(intervalRainfall)
+
+        });
+
+    }
 
 
 
-    // --------------------------------------------------
+    // ==================================================
+    // SOIL MOISTURE
+    // ==================================================
+
+    let soilMoisture = null;
+
+
+    if (
+        current.soil_moisture_0_to_7cm !==
+        undefined
+    ) {
+
+        soilMoisture =
+            safeNumber(
+                current.soil_moisture_0_to_7cm
+            ) * 100;
+
+    }
+
+
+
+    // ==================================================
+    // CURRENT RAINFALL
+    // ==================================================
+
+    const rainfall =
+        safeNumber(
+            current.rain
+        );
+
+
+
+    // ==================================================
     // RETURN ML-READY DATA
-    // --------------------------------------------------
+    // ==================================================
 
     return {
 
-        // Current rainfall.
+        // --------------------------------------------------
+        // CURRENT RAINFALL
+        // --------------------------------------------------
+
         rainfall:
-            current.rain,
+            round(rainfall),
 
 
-        // Historical rainfall.
+        // --------------------------------------------------
+        // HISTORICAL RAINFALL
+        // --------------------------------------------------
+
         rainfallLast6Hours:
-            rainfallLast6Hours,
+            round(rainfallLast6Hours),
 
         rainfallLast24Hours:
-            rainfallLast24Hours,
+            round(rainfallLast24Hours),
 
 
-        // Forecast rainfall.
+        // --------------------------------------------------
+        // FORECAST RAINFALL
+        // --------------------------------------------------
+
         rainfallForecastNext6Hours:
-            rainfallForecastNext6Hours,
+            round(
+                rainfallForecastNext6Hours
+            ),
 
         rainfallForecastNext24Hours:
-            rainfallForecastNext24Hours,
+            round(
+                rainfallForecastNext24Hours
+            ),
 
 
-        // Environmental conditions.
+        // --------------------------------------------------
+        // 6-HOUR INTERVAL DATA
+        // --------------------------------------------------
+
+        rainfall6HourIntervals:
+            rainfall6HourIntervals,
+
+
+        // --------------------------------------------------
+        // ENVIRONMENTAL PARAMETERS
+        // --------------------------------------------------
+
         soilMoisture:
-            Number(soilMoisture.toFixed(2)),
+            soilMoisture === null
+                ? null
+                : round(soilMoisture),
 
         temperature:
-            current.temperature_2m,
+            safeNumber(
+                current.temperature_2m
+            ),
 
         humidity:
-            current.relative_humidity_2m,
+            safeNumber(
+                current.relative_humidity_2m
+            ),
 
         atmosphericPressure:
-            current.pressure_msl,
+            safeNumber(
+                current.pressure_msl
+            ),
 
 
-        // Location elevation.
+        // --------------------------------------------------
+        // LOCATION ELEVATION
+        // --------------------------------------------------
+
         elevation:
-            weatherData.elevation,
+            safeNumber(
+                weatherData.elevation
+            ),
 
 
-        // Timestamp.
+        // --------------------------------------------------
+        // TIMESTAMP
+        // --------------------------------------------------
+
         lastUpdated:
             current.time
+
     };
+
 }
 
 
@@ -334,6 +676,9 @@ function processWeatherData(weatherData) {
 // --------------------------------------------------
 
 module.exports = {
+
     getWeatherData,
+
     processWeatherData
+
 };

@@ -1,9 +1,9 @@
 // --------------------------------------------------
 // WEST BENGAL FLOOD PREDICTION LOCATIONS
 // --------------------------------------------------
-
-// This file contains the five geographical regions
-// supported by our flash-flood prediction prototype.
+//
+// This file contains the geographical locations
+// supported by the flash-flood prediction prototype.
 //
 // Each location contains:
 // - A unique ID
@@ -12,8 +12,11 @@
 // - Weather station name
 // - Latitude and longitude
 //
-// The coordinates will later be used to retrieve
+// The coordinates are used to retrieve
 // live environmental data from Open-Meteo.
+//
+// --------------------------------------------------
+
 
 const locations = [
 
@@ -84,15 +87,31 @@ const locations = [
         weatherStation: "IMD Malda",
         latitude: 25.0108,
         longitude: 88.1411
+    },
+
+
+    // --------------------------------------------------
+    // 6. KOLKATA
+    // --------------------------------------------------
+
+    {
+        id: "kolkata",
+        name: "Kolkata",
+        district: "Kolkata",
+        weatherStation: "IMD Kolkata",
+        latitude: 22.5726,
+        longitude: 88.3639
     }
+
 ];
 
 
 // --------------------------------------------------
 // EXPORT LOCATIONS
 // --------------------------------------------------
-
-// Make the location list available to other backend
-// modules such as server.js and weatherService.js.
+//
+// Makes the location list available to other
+// backend modules such as server.js and weatherService.js.
+//
 
 module.exports = locations;
