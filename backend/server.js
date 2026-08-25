@@ -4,6 +4,8 @@
 
 const express = require("express");
 const cors = require("cors");
+const { spawn } = require("child_process");
+const path = require("path");
 
 const locations = require("./locations");
 
@@ -99,16 +101,16 @@ app.get("/api/locations", (req, res) => {
 
 
 // ======================================================
-// LIVE ENVIRONMENTAL DATA ROUTE
+// LIVE ENVIRONMENTAL DATA + LSTM PREDICTION
 // ======================================================
 
 app.get("/api/data", async (req, res) => {
 
     try {
 
-        // --------------------------------------------------
+        // ==================================================
         // GET LOCATION ID
-        // --------------------------------------------------
+        // ==================================================
 
         const locationId = req.query.location;
 
@@ -125,15 +127,12 @@ app.get("/api/data", async (req, res) => {
         }
 
 
-        // --------------------------------------------------
+        // ==================================================
         // FIND LOCATION
-        // --------------------------------------------------
+        // ==================================================
 
         const location = locations.find(
-
-            item =>
-                item.id === locationId
-
+            item => item.id === locationId
         );
 
 
@@ -149,6 +148,7 @@ app.get("/api/data", async (req, res) => {
         }
 
 
+        console.log("");
         console.log(
             `Fetching live data for ${location.name}...`
         );
@@ -157,11 +157,6 @@ app.get("/api/data", async (req, res) => {
         // ==================================================
         // FETCH LIVE OPEN-METEO DATA
         // ==================================================
-
-        // IMPORTANT:
-        // weatherService.js expects the COMPLETE
-        // location object, not latitude and longitude
-        // separately.
 
         const rawWeatherData =
             await getWeatherData(location);
@@ -173,6 +168,11 @@ app.get("/api/data", async (req, res) => {
 
         const weather =
             processWeatherData(rawWeatherData);
+
+
+        console.log(
+            "Live weather data received."
+        );
 
 
         // ==================================================
@@ -197,16 +197,12 @@ app.get("/api/data", async (req, res) => {
 
 
         // ==================================================
-        // FETCH RIVER DATA IF SERVICE EXISTS
+        // FETCH RIVER DATA
         // ==================================================
 
         if (riverService) {
 
             try {
-
-                // ------------------------------------------
-                // getRiverData()
-                // ------------------------------------------
 
                 if (
                     typeof riverService.getRiverData ===
@@ -215,7 +211,7 @@ app.get("/api/data", async (req, res) => {
 
                     const result =
                         await riverService.getRiverData(
-                            location
+                            location.id
                         );
 
 
@@ -248,11 +244,6 @@ app.get("/api/data", async (req, res) => {
 
                 }
 
-
-                // ------------------------------------------
-                // getRiverLevel()
-                // ------------------------------------------
-
                 else if (
                     typeof riverService.getRiverLevel ===
                     "function"
@@ -260,7 +251,7 @@ app.get("/api/data", async (req, res) => {
 
                     const result =
                         await riverService.getRiverLevel(
-                            location
+                            location.id
                         );
 
 
@@ -302,10 +293,285 @@ app.get("/api/data", async (req, res) => {
                     riverError
                 );
 
-                // Do NOT stop the weather API if
-                // river data is unavailable.
-
             }
+
+        }
+
+
+        // ==================================================
+        // PREPARE WATER LEVEL FOR ML
+        // ==================================================
+        //
+        // The current training dataset has no usable
+        // water-level values.
+        //
+        // Therefore, when live water level is unavailable,
+        // use 0.0 for the ML input.
+        //
+        // The API response still correctly reports
+        // waterLevel as null.
+        //
+        // ==================================================
+
+        const waterLevelForML =
+            riverData.waterLevel === null ||
+            riverData.waterLevel === undefined
+                ? 0.0
+                : Number(riverData.waterLevel);
+
+
+        console.log(
+            `Water level used for ML: ${waterLevelForML}`
+        );
+
+
+        // ==================================================
+        // LSTM FLOOD PREDICTION
+        // ==================================================
+
+        let floodPrediction = null;
+
+
+        try {
+
+            // --------------------------------------------------
+            // CREATE MODEL INPUT
+            // --------------------------------------------------
+
+            const predictionInput = {
+
+                rainfall_1h_mm:
+                    weather.rainfall,
+
+                rainfall_6h_mm:
+                    weather.rainfallLast6Hours,
+
+                rainfall_24h_mm:
+                    weather.rainfallLast24Hours,
+
+                soil_moisture_pct:
+                    weather.soilMoisture,
+
+                temperature_c:
+                    weather.temperature,
+
+                humidity_pct:
+                    weather.humidity,
+
+                pressure_hpa:
+                    weather.atmosphericPressure,
+
+                water_level_m:
+                    waterLevelForML,
+
+                elevation_m:
+                    weather.elevation
+
+            };
+
+
+            console.log(
+                "Sending live data to LSTM..."
+            );
+
+            console.log(
+                "LSTM input:",
+                predictionInput
+            );
+
+
+            // --------------------------------------------------
+            // PYTHON SCRIPT PATH
+            // --------------------------------------------------
+
+            const projectRoot =
+                path.join(__dirname, "..");
+
+
+            const scriptPath =
+                path.join(
+                    projectRoot,
+                    "ml",
+                    "predict_lstm_api.py"
+                );
+
+
+            console.log(
+                "Python script:",
+                scriptPath
+            );
+
+            console.log(
+                "Python working directory:",
+                projectRoot
+            );
+
+
+            // --------------------------------------------------
+            // START PYTHON
+            // --------------------------------------------------
+
+            const pythonProcess = spawn(
+                "python",
+                [scriptPath],
+                {
+                    cwd: projectRoot
+                }
+            );
+
+
+            let output = "";
+            let errorOutput = "";
+
+
+            // --------------------------------------------------
+            // SEND DATA TO PYTHON
+            // --------------------------------------------------
+
+            pythonProcess.stdin.write(
+                JSON.stringify(predictionInput)
+            );
+
+            pythonProcess.stdin.end();
+
+
+            console.log(
+                "Waiting for LSTM Python response..."
+            );
+
+
+            // --------------------------------------------------
+            // RECEIVE PYTHON STDOUT
+            // --------------------------------------------------
+
+            pythonProcess.stdout.on(
+                "data",
+                (data) => {
+
+                    output += data.toString();
+
+                }
+            );
+
+
+            // --------------------------------------------------
+            // RECEIVE PYTHON STDERR
+            // --------------------------------------------------
+
+            pythonProcess.stderr.on(
+                "data",
+                (data) => {
+
+                    errorOutput += data.toString();
+
+                }
+            );
+
+
+            // --------------------------------------------------
+            // WAIT FOR PYTHON TO FINISH
+            // --------------------------------------------------
+
+            await new Promise((resolve) => {
+
+                pythonProcess.on(
+                    "close",
+                    (code) => {
+
+                        console.log(
+                            "Python process closed with code:",
+                            code
+                        );
+
+
+                        console.log(
+                            "Python stdout:",
+                            output
+                        );
+
+
+                        console.log(
+                            "Python stderr:",
+                            errorOutput
+                        );
+
+
+                        // ------------------------------------------
+                        // SUCCESS
+                        // ------------------------------------------
+
+                        if (code === 0) {
+
+                            try {
+
+                                floodPrediction =
+                                    JSON.parse(
+                                        output.trim()
+                                    );
+
+
+                                console.log(
+                                    "LSTM prediction:",
+                                    floodPrediction
+                                );
+
+                            }
+
+                            catch (parseError) {
+
+                                console.error(
+                                    "Unable to parse LSTM response:",
+                                    parseError
+                                );
+
+                                console.error(
+                                    "Raw Python output:",
+                                    output
+                                );
+
+                            }
+
+                        }
+
+                        // ------------------------------------------
+                        // PYTHON ERROR
+                        // ------------------------------------------
+
+                        else {
+
+                            console.error(
+                                "LSTM prediction failed."
+                            );
+
+                            console.error(
+                                "Python exit code:",
+                                code
+                            );
+
+                            console.error(
+                                "Python error:",
+                                errorOutput
+                            );
+
+                        }
+
+
+                        resolve();
+
+                    }
+
+                );
+
+            });
+
+        }
+
+        catch (predictionError) {
+
+            console.error(
+                "Live LSTM prediction error:",
+                predictionError
+            );
 
         }
 
@@ -415,6 +681,14 @@ app.get("/api/data", async (req, res) => {
 
 
                 // ==========================================
+                // LSTM FLOOD PREDICTION
+                // ==========================================
+
+                floodPrediction:
+                    floodPrediction,
+
+
+                // ==========================================
                 // UPDATE TIME
                 // ==========================================
 
@@ -461,6 +735,278 @@ app.get("/api/data", async (req, res) => {
 
 
 // ======================================================
+// LSTM FLOOD PREDICTION ROUTE
+// ======================================================
+
+app.post("/api/predict", async (req, res) => {
+
+    try {
+
+        const inputData = req.body;
+
+
+        // ==================================================
+        // WATER LEVEL DEFAULT
+        // ==================================================
+
+        if (
+            inputData.water_level_m === null ||
+            inputData.water_level_m === undefined
+        ) {
+
+            inputData.water_level_m = 0.0;
+
+        }
+
+
+        // ==================================================
+        // REQUIRED MODEL INPUTS
+        // ==================================================
+
+        const requiredFields = [
+
+            "rainfall_1h_mm",
+            "rainfall_6h_mm",
+            "rainfall_24h_mm",
+            "soil_moisture_pct",
+            "temperature_c",
+            "humidity_pct",
+            "pressure_hpa",
+            "water_level_m",
+            "elevation_m"
+
+        ];
+
+
+        // ==================================================
+        // CHECK INPUTS
+        // ==================================================
+
+        for (const field of requiredFields) {
+
+            if (
+                inputData[field] === undefined ||
+                inputData[field] === null
+            ) {
+
+                return res.status(400).json({
+
+                    error:
+                        `Missing required field: ${field}`
+
+                });
+
+            }
+
+        }
+
+
+        console.log(
+            "Received prediction request:"
+        );
+
+        console.log(
+            inputData
+        );
+
+
+        // ==================================================
+        // PYTHON SCRIPT PATH
+        // ==================================================
+
+        const projectRoot =
+            path.join(__dirname, "..");
+
+
+        const scriptPath =
+            path.join(
+                projectRoot,
+                "ml",
+                "predict_lstm_api.py"
+            );
+
+
+        // ==================================================
+        // START PYTHON
+        // ==================================================
+
+        const pythonProcess = spawn(
+            "python",
+            [scriptPath],
+            {
+                cwd: projectRoot
+            }
+        );
+
+
+        let output = "";
+        let errorOutput = "";
+
+
+        // ==================================================
+        // SEND DATA TO PYTHON
+        // ==================================================
+
+        pythonProcess.stdin.write(
+            JSON.stringify(inputData)
+        );
+
+        pythonProcess.stdin.end();
+
+
+        // ==================================================
+        // RECEIVE OUTPUT
+        // ==================================================
+
+        pythonProcess.stdout.on(
+            "data",
+            (data) => {
+
+                output += data.toString();
+
+            }
+        );
+
+
+        // ==================================================
+        // RECEIVE ERRORS
+        // ==================================================
+
+        pythonProcess.stderr.on(
+            "data",
+            (data) => {
+
+                errorOutput += data.toString();
+
+            }
+        );
+
+
+        // ==================================================
+        // PYTHON FINISHED
+        // ==================================================
+
+        pythonProcess.on(
+            "close",
+            (code) => {
+
+                console.log(
+                    "Prediction Python process closed:",
+                    code
+                );
+
+
+                console.log(
+                    "Prediction stdout:",
+                    output
+                );
+
+
+                console.log(
+                    "Prediction stderr:",
+                    errorOutput
+                );
+
+
+                if (code !== 0) {
+
+                    console.error(
+                        "Python prediction error:",
+                        errorOutput
+                    );
+
+
+                    return res.status(500).json({
+
+                        error:
+                            "LSTM prediction failed.",
+
+                        details:
+                            errorOutput
+
+                    });
+
+                }
+
+
+                try {
+
+                    const prediction =
+                        JSON.parse(
+                            output.trim()
+                        );
+
+
+                    console.log(
+                        "LSTM prediction:",
+                        prediction
+                    );
+
+
+                    res.json({
+
+                        success: true,
+
+                        prediction:
+                            prediction
+
+                    });
+
+                }
+
+                catch (parseError) {
+
+                    console.error(
+                        "Prediction JSON error:",
+                        parseError
+                    );
+
+
+                    console.error(
+                        "Python output:",
+                        output
+                    );
+
+
+                    res.status(500).json({
+
+                        error:
+                            "Invalid prediction response."
+
+                    });
+
+                }
+
+            }
+
+        );
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Prediction API error:",
+            error
+        );
+
+
+        res.status(500).json({
+
+            error:
+                "Unable to run flood prediction.",
+
+            details:
+                error.message
+
+        });
+
+    }
+
+});
+
+
+// ======================================================
 // 404 ROUTE
 // ======================================================
 
@@ -489,7 +1035,7 @@ app.listen(PORT, () => {
     );
 
     console.log(
-        "   FLOOD PREDICTION BACKEND"
+        "       FLOOD PREDICTION BACKEND"
     );
 
     console.log(

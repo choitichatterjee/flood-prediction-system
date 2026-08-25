@@ -118,9 +118,7 @@ function getWeatherData(location) {
 
                     const data = JSON.parse(stdout);
 
-                    resolve(
-                        processWeatherData(data)
-                    );
+                    resolve(data);
 
                 } catch (parseError) {
 
