@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pandas as pd
 import requests
 import streamlit as st
@@ -110,6 +113,31 @@ def format_value(data, unit=""):
     try: return f"{float(data):.2f} {unit}"
     except (ValueError, TypeError): return f"{data} {unit}"
 
+def save_notification_user(name, email, district):
+    """Save only the information needed for flood email alerts."""
+    users_file = Path(__file__).resolve().parent.parent / "notification" / "users.json"
+
+    try:
+        users_file.parent.mkdir(parents=True, exist_ok=True)
+        if users_file.exists():
+            with users_file.open("r", encoding="utf-8") as file:
+                users = json.load(file)
+        else:
+            users = []
+
+        if not any(user.get("email", "").lower() == email.lower() for user in users):
+            users.append({
+                "name": name,
+                "email": email,
+                "district": district
+            })
+            with users_file.open("w", encoding="utf-8") as file:
+                json.dump(users, file, indent=4)
+        return True
+    except Exception as error:
+        st.error(f"Could not save notification details: {error}")
+        return False
+
 # ============================================================
 # LOGIN PAGE COMPONENT
 # ============================================================
@@ -139,14 +167,13 @@ def login_page():
             if st.button("Login", use_container_width=True):
                 user_db = st.session_state.user_db
                 if login_email in user_db and user_db[login_email]["password"] == login_pass:
-                    # Update state and instantly redirect
                     st.session_state.logged_in = True
                     st.session_state.selected_district = selected_district
                     st.session_state.user_info = {
                         "email": login_email,
                         "name": user_db[login_email]["name"]
                     }
-                    st.rerun() # This reloads the script and jumps to dashboard_page()
+                    st.rerun() 
                 else:
                     st.error("Invalid email or password.")
 
@@ -160,8 +187,9 @@ def login_page():
                 if signup_email in st.session_state.user_db:
                     st.error("Email already registered.")
                 else:
-                    st.session_state.user_db[signup_email] = {"password": signup_pass, "name": signup_name, "district": signup_dist}
-                    st.success("Account created! Switch tabs to login.")
+                    if save_notification_user(signup_name, signup_email, signup_dist):
+                        st.session_state.user_db[signup_email] = {"password": signup_pass, "name": signup_name, "district": signup_dist}
+                        st.success("Account created! Switch tabs to login.")
 
 # ============================================================
 # DASHBOARD PAGE COMPONENT
@@ -182,72 +210,218 @@ def dashboard_page():
             st.rerun()
 
         st.divider()
-        selected_name = st.selectbox("📍 Switch Location", district_list, index=default_index, key="dash_location")
+        st.markdown("### 📍 Select Location")
+        selected_name = st.selectbox("District", district_list, index=default_index, key="dash_location")
         st.session_state.selected_district = selected_name
         location = LOCATIONS[selected_name]
+
+        # Re-added Backend Test Block
+        st.divider()
+        st.markdown("### System")
+        st.code(BACKEND_URL, language="text")
+        st.caption("Node.js backend connection")
+        if st.button("🔌 Test Backend Connection"):
+            result = check_backend()
+            if "error" in result:
+                st.error(result["error"])
+            else:
+                st.success("Backend connected")
+                st.json(result)
 
     # HERO
     st.markdown(
         f"""<div class="hero">
             <div class="hero-label">AI-POWERED ENVIRONMENTAL INTELLIGENCE</div>
             <div class="hero-title">West Bengal<br><span>{location['district']} Risk Intelligence</span></div>
+            <div class="hero-text">
+                Monitor rainfall, weather conditions, river information 
+                and machine-learning predictions for selected locations across West Bengal.
+            </div>
         </div>""",
         unsafe_allow_html=True,
     )
 
-    # LOCATION CARDS
+    # LOCATION OVERVIEW
     st.markdown('<div class="section">📍 Location Overview</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     c1.markdown(f'<div class="card"><div class="card-icon">📍</div><div class="card-label">DISTRICT</div><div class="card-value">{location["district"]}</div></div>', unsafe_allow_html=True)
     c2.markdown(f'<div class="card"><div class="card-icon">🛰️</div><div class="card-label">STATION</div><div class="card-value">{location["station"]}</div></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="card"><div class="card-icon">🗺️</div><div class="card-label">COORDS</div><div class="card-value">{location["lat"]}, {location["lon"]}</div></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="card"><div class="card-icon">🗺️</div><div class="card-label">COORDS</div><div class="card-value">{location["lat"]:.4f}, {location["lon"]:.4f}</div></div>', unsafe_allow_html=True)
 
     # DATA FETCHING
     st.markdown('<div class="section">🌧️ Environmental Monitoring</div>', unsafe_allow_html=True)
     if st.button("🔄 Fetch Latest Data", use_container_width=True):
-        with st.spinner("Fetching data..."):
+        with st.spinner("Fetching weather, river and prediction data..."):
             result = fetch_live_data(location["id"])
             if "error" not in result:
                 st.session_state.environmental_data = result
                 st.session_state.prediction = result.get("environmentalData", {}).get("floodPrediction")
+                st.success("Latest environmental data received")
                 st.rerun()
             else:
                 st.error(result["error"])
 
-    env_data = st.session_state.environmental_data.get("environmentalData", {}) if st.session_state.environmental_data else {}
+    # EXTRACT DATA
+    api_response = st.session_state.environmental_data or {}
+    env_data = api_response.get("environmentalData", {}) if isinstance(api_response, dict) else {}
     
-    # METRICS
+    rainfall_1h = get_value(env_data, ["rainfall", "rainfall_1h_mm"])
+    rainfall_6h = get_value(env_data, ["rainfallLast6Hours", "rainfall_6h_mm"])
+    rainfall_24h = get_value(env_data, ["rainfallLast24Hours", "rainfall_24h_mm"])
+    temperature = get_value(env_data, ["temperature", "temperature_c"])
+    humidity = get_value(env_data, ["humidity", "humidity_pct"])
+    pressure = get_value(env_data, ["atmosphericPressure", "pressure_hpa"])
+    soil_moisture = get_value(env_data, ["soilMoisture", "soil_moisture_pct"])
+    elevation = get_value(env_data, ["elevation", "elevation_m"])
+    water_level = get_value(env_data, ["waterLevel", "water_level_m"])
+    
+    # 8 WEATHER CARDS
     st.markdown('<div class="section">🌦️ Weather Conditions</div>', unsafe_allow_html=True)
-    cols = st.columns(4)
-    metrics = [
-        ("🌧️", "RAIN 1H", get_value(env_data, ["rainfall", "rainfall_1h_mm"]), "mm"),
-        ("🌡️", "TEMP", get_value(env_data, ["temperature", "temperature_c"]), "°C"),
-        ("💧", "HUMIDITY", get_value(env_data, ["humidity", "humidity_pct"]), "%"),
-        ("🌱", "SOIL", get_value(env_data, ["soilMoisture", "soil_moisture_pct"]), "%")
+    weather_cards = [
+        ("🌧️", "RAINFALL 1H", rainfall_1h, "mm"),
+        ("🌧️", "RAINFALL 6H", rainfall_6h, "mm"),
+        ("🌧️", "RAINFALL 24H", rainfall_24h, "mm"),
+        ("🌡️", "TEMPERATURE", temperature, "°C"),
+        ("💧", "HUMIDITY", humidity, "%"),
+        ("🌬️", "PRESSURE", pressure, "hPa"),
+        ("🌱", "SOIL MOISTURE", soil_moisture, "%"),
+        ("⛰️", "ELEVATION", elevation, "m"),
     ]
-    for idx, (icon, label, val, unit) in enumerate(metrics):
-        with cols[idx]:
+    cols = st.columns(4)
+    for idx, (icon, label, val, unit) in enumerate(weather_cards):
+        with cols[idx % 4]:
             st.markdown(f'<div class="card"><div class="card-icon">{icon}</div><div class="card-label">{label}</div><div class="card-value">{format_value(val, unit)}</div></div>', unsafe_allow_html=True)
 
-    # PREDICTION
-    st.markdown('<div class="section">🤖 AI Flood Prediction</div>', unsafe_allow_html=True)
-    prediction = st.session_state.prediction
-    if isinstance(prediction, dict):
-        risk = str(prediction.get("riskLevel", "UNKNOWN")).upper()
-        prob = float(prediction.get("floodProbability", prediction.get("probability", 0))) * 100
-        css = "high" if risk == "HIGH" else "medium" if risk == "MEDIUM" else "low"
-        icon = "🔴" if risk == "HIGH" else "🟡" if risk == "MEDIUM" else "🟢"
-        
+    # RIVER MONITORING
+    st.markdown('<div class="section">🌊 River Monitoring</div>', unsafe_allow_html=True)
+    river_col, river_info_col = st.columns(2)
+    river_name = env_data.get("waterLevelRiver", "Unknown")
+    river_station = env_data.get("waterLevelStation", "Unknown")
+    river_source = env_data.get("waterLevelSource", "Not available")
+    
+    with river_col:
+        if env_data:
+            st.markdown(
+                f"""<div class="card">
+                    <div class="card-icon">🌊</div>
+                    <div class="card-label">RIVER</div>
+                    <div class="card-value">{river_name}</div>
+                    <br>
+                    <div class="card-label">WATER LEVEL</div>
+                    <div class="card-value">{format_value(water_level, "m")}</div>
+                    <p style="color:#78909c;">Station: {river_station}</p>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.info("Fetch data to view river information.")
+
+    with river_info_col:
         st.markdown(
-            f"""<div class="prediction">
-                <div class="card-label">FLOOD PROBABILITY</div>
-                <div class="probability">{prob:.2f}%</div>
-                <div class="{css}">{icon} {risk} RISK</div>
+            f"""<div class="card">
+                <div class="card-icon">🛰️</div>
+                <div class="card-label">RIVER DATA SOURCE</div>
+                <div class="card-value">{river_source}</div>
+                <br>
+                <div style="color:#f2b84b; padding:12px; border-radius:10px; background:rgba(242,184,75,0.08);">
+                    🟡 River information is provided by the Node.js backend.
+                </div>
             </div>""",
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
-    else:
-        st.info("Run model or fetch data to see predictions.")
+
+    # FLOOD PREDICTION (WITH MANUAL INPUTS)
+    st.markdown('<div class="section">🤖 AI Flood Prediction</div>', unsafe_allow_html=True)
+    prediction_col, input_col = st.columns([1, 1])
+
+    with input_col:
+        st.markdown(
+            """<div class="card">
+                <div class="card-label">LSTM MODEL</div>
+                <h2 style="margin:0;">Model Inputs</h2>
+                <p style="color:#78909c;">The model uses 9 environmental features.</p>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        input_rain_1h = st.number_input("Rainfall 1h (mm)", value=safe_float(rainfall_1h))
+        input_rain_6h = st.number_input("Rainfall 6h (mm)", value=safe_float(rainfall_6h))
+        input_rain_24h = st.number_input("Rainfall 24h (mm)", value=safe_float(rainfall_24h))
+        input_soil = st.number_input("Soil Moisture (%)", value=safe_float(soil_moisture))
+        input_temperature = st.number_input("Temperature (°C)", value=safe_float(temperature))
+        input_humidity = st.number_input("Humidity (%)", value=safe_float(humidity))
+        input_pressure = st.number_input("Pressure (hPa)", value=safe_float(pressure))
+        input_water_level = st.number_input("Water Level (m)", value=safe_float(water_level))
+        input_elevation = st.number_input("Elevation (m)", value=safe_float(elevation))
+
+    with prediction_col:
+        prediction = st.session_state.prediction
+        if isinstance(prediction, dict):
+            probability = prediction.get("floodProbability", prediction.get("probability", 0))
+            risk = str(prediction.get("riskLevel", "UNKNOWN")).upper()
+            try: probability = float(probability)
+            except (ValueError, TypeError): probability = 0.0
+            
+            percentage = probability * 100 if probability <= 1.0 else probability
+            css_class, icon = ("high", "🔴") if risk == "HIGH" else ("medium", "🟡") if risk == "MEDIUM" else ("low", "🟢")
+            
+            st.markdown(
+                f"""<div class="prediction">
+                    <div class="card-label">FLOOD PROBABILITY</div>
+                    <div class="probability">{percentage:.2f}%</div>
+                    <div class="{css_class}">{icon} {risk} RISK</div>
+                    <br>
+                    <p style="color:#78909c;">LSTM model prediction</p>
+                </div>""",
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                """<div class="prediction">
+                    <div style="font-size:60px;">🛡️</div>
+                    <h2>Flood Risk</h2>
+                    <p style="color:#78909c;">Fetch data or run the model to see a prediction.</p>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🤖 RUN LSTM PREDICTION", use_container_width=True):
+        payload = {
+            "rainfall_1h_mm": input_rain_1h, "rainfall_6h_mm": input_rain_6h, "rainfall_24h_mm": input_rain_24h,
+            "soil_moisture_pct": input_soil, "temperature_c": input_temperature, "humidity_pct": input_humidity,
+            "pressure_hpa": input_pressure, "water_level_m": input_water_level, "elevation_m": input_elevation,
+        }
+        with st.spinner("Running LSTM model..."):
+            result = run_prediction(payload)
+            if "error" in result:
+                st.error(result["error"])
+            else:
+                st.session_state.prediction = result.get("prediction")
+                st.success("Prediction completed")
+                st.rerun()
+
+    # MAP VISUALIZATION
+    st.markdown('<div class="section">🗺️ Monitoring Location</div>', unsafe_allow_html=True)
+    map_data = pd.DataFrame({"latitude": [location["lat"]], "longitude": [location["lon"]]})
+    st.map(map_data, latitude="latitude", longitude="longitude", zoom=7)
+
+    # MODEL INFORMATION
+    st.markdown('<div class="section">🧠 About the Model</div>', unsafe_allow_html=True)
+    model_info = [("MODEL", "LSTM"), ("FEATURES", "9"), ("TIME STEPS", "6"), ("OUTPUT", "Flood Probability")]
+    model_cols = st.columns(4)
+    for col, (title, val) in zip(model_cols, model_info):
+        col.markdown(f'<div class="card"><div class="card-label">{title}</div><div class="card-value">{val}</div></div>', unsafe_allow_html=True)
+
+    # FOOTER
+    st.markdown(
+        """<div class="footer">
+            <b>FloodGuard AI</b><br>
+            West Bengal Flood Prediction & Environmental Intelligence System
+            <br><br>
+            ⚠️ Predictions are model estimates and should not be treated as official flood warnings.
+        </div>""",
+        unsafe_allow_html=True,
+    )
 
 # ============================================================
 # APP ROUTER (Main Execution)

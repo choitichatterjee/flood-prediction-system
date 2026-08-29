@@ -41,6 +41,13 @@ try {
 
 
 // ======================================================
+// NOTIFICATION SERVICE
+// ======================================================
+
+const { sendHighRiskAlert } = require("../notification/notificationService");
+
+
+// ======================================================
 // MIDDLEWARE
 // ======================================================
 
@@ -571,6 +578,31 @@ app.get("/api/data", async (req, res) => {
             console.error(
                 "Live LSTM prediction error:",
                 predictionError
+            );
+
+        }
+
+
+        // ==================================================
+        // HIGH-RISK EMAIL ALERT
+        // ==================================================
+
+        try {
+
+            if (floodPrediction && floodPrediction.riskLevel === "HIGH") {
+
+                await sendHighRiskAlert(
+                    location.district,
+                    floodPrediction
+                );
+
+            }
+
+        } catch (notificationError) {
+
+            console.error(
+                "Notification service error:",
+                notificationError
             );
 
         }

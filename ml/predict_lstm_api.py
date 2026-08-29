@@ -99,7 +99,7 @@ if flood_probability >= 0.70:
 
     risk_level = "HIGH"
 
-elif flood_probability >= 0.40:
+elif flood_probability >= 0.50:
 
     risk_level = "MEDIUM"
 
