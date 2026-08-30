@@ -91,6 +91,7 @@ def check_backend():
     try: return requests.get(f"{BACKEND_URL}/", timeout=10).json()
     except Exception as e: return {"error": str(e)}
 
+```python
 def fetch_live_data(location_id):
     try:
         response = requests.get(
@@ -99,16 +100,28 @@ def fetch_live_data(location_id):
             timeout=120
         )
 
-        print("STATUS:", response.status_code)
-        print("CONTENT TYPE:", response.headers.get("content-type"))
-        print("RESPONSE:", response.text[:1000])
+        if response.status_code != 200:
+            return {
+                "error": f"Backend returned HTTP {response.status_code}",
+                "details": response.text[:1000]
+            }
 
-        response.raise_for_status()
+        try:
+            return response.json()
 
-        return response.json()
+        except ValueError:
+            return {
+                "error": "Backend returned a non-JSON response.",
+                "details": response.text[:1000]
+            }
 
-    except Exception as e:
-        return {"error": str(e)}
+    except requests.exceptions.RequestException as e:
+        return {
+            "error": "Could not connect to backend.",
+            "details": str(e)
+        }
+```
+
 
 def run_prediction(payload):
     try: return requests.post(f"{BACKEND_URL}/api/predict", json=payload, timeout=120).json()
