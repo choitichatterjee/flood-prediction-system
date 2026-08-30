@@ -325,19 +325,6 @@ def dashboard_page():
         st.session_state.selected_district = selected_name
         location = LOCATIONS[selected_name]
 
-        # Re-added Backend Test Block
-        st.divider()
-        st.markdown("### System")
-        st.code(BACKEND_URL, language="text")
-        st.caption("Node.js backend connection")
-        if st.button("🔌 Test Backend Connection"):
-            result = check_backend()
-            if "error" in result:
-                st.error(result["error"])
-            else:
-                st.success("Backend connected")
-                st.json(result)
-
     # HERO
     st.markdown(
         f"""<div class="hero">
