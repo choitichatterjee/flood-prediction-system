@@ -92,8 +92,23 @@ def check_backend():
     except Exception as e: return {"error": str(e)}
 
 def fetch_live_data(location_id):
-    try: return requests.get(f"{BACKEND_URL}/api/data", params={"location": location_id}, timeout=120).json()
-    except Exception as e: return {"error": str(e)}
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/data",
+            params={"location": location_id},
+            timeout=120
+        )
+
+        print("STATUS:", response.status_code)
+        print("CONTENT TYPE:", response.headers.get("content-type"))
+        print("RESPONSE:", response.text[:1000])
+
+        response.raise_for_status()
+
+        return response.json()
+
+    except Exception as e:
+        return {"error": str(e)}
 
 def run_prediction(payload):
     try: return requests.post(f"{BACKEND_URL}/api/predict", json=payload, timeout=120).json()
