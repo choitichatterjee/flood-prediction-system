@@ -499,7 +499,7 @@ def dashboard_page():
         payload = {
             "rainfall_1h_mm": input_rain_1h, "rainfall_6h_mm": input_rain_6h, "rainfall_24h_mm": input_rain_24h,
             "soil_moisture_pct": input_soil, "temperature_c": input_temperature, "humidity_pct": input_humidity,
-            "pressure_hpa": input_pressure, "water_level_m": input_water_level, "elevation_m": input_elevation,
+            "pressure_hpa": input_pressure, "water_level_m": input_water_level, "elevation_m": input_elevation,"district": st.session_state.selected_district,
         }
         with st.spinner("Running LSTM model..."):
             result = run_prediction(payload)

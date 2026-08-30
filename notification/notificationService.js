@@ -1,34 +1,67 @@
-const fs = require("fs");
-const path = require("path");
+const mysql = require("mysql2/promise");
 const nodemailer = require("nodemailer");
-require("dotenv").config({ path: path.join(__dirname, ".env") });
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "../backend/.env") });
 
-const USERS_FILE = path.join(__dirname, "users.json");
+/*
+ * Get all users registered in MySQL for a particular district.
+ */
+async function getUsersByDistrict(district) {
+    let connection;
 
-function getUsers() {
     try {
-        return JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
+        connection = await mysql.createConnection({
+            host: process.env.DB_HOST,
+            user: process.env.DB_USER,
+            password: process.env.DB_PASSWORD,
+            database: process.env.DB_NAME
+        });
+
+        const [users] = await connection.execute(
+            `
+            SELECT name, email, district
+            FROM users
+            WHERE LOWER(TRIM(district)) = LOWER(TRIM(?))
+            `,
+            [district]
+        );
+
+        return users;
+
     } catch (error) {
-        console.error("Unable to read notification users:", error.message);
+        console.error("Unable to read users from MySQL:", error.message);
         return [];
+
+    } finally {
+        if (connection) {
+            await connection.end();
+        }
     }
 }
 
+
+/*
+ * Send email alerts only when the predicted risk is HIGH.
+ */
 async function sendHighRiskAlert(district, prediction) {
-    // Send emails only for HIGH risk.
-    if (!prediction || String(prediction.riskLevel).toUpperCase() !== "HIGH") {
+
+    // Only send notifications for HIGH flood risk.
+    if (
+        !prediction ||
+        String(prediction.riskLevel).toUpperCase() !== "HIGH"
+    ) {
         return;
     }
 
-    const users = getUsers().filter(
-        user => String(user.district).trim().toLowerCase() === String(district).trim().toLowerCase()
-    );
+    // Get registered users directly from MySQL.
+    const users = await getUsersByDistrict(district);
 
     if (users.length === 0) {
         console.log(`No registered users found for ${district}.`);
         return;
     }
 
+    // Check email configuration.
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
         console.error("EMAIL_USER and EMAIL_PASS are not configured.");
         return;
@@ -42,14 +75,18 @@ async function sendHighRiskAlert(district, prediction) {
         }
     });
 
-    const probability = Number(prediction.floodProbability || 0) * 100;
+    const probability =
+        Number(prediction.floodProbability || 0) * 100;
 
+    // Send the alert to every registered user in the affected district.
     for (const user of users) {
         try {
+
             await transporter.sendMail({
                 from: process.env.EMAIL_USER,
                 to: user.email,
                 subject: `🚨 HIGH Flood Risk Alert - ${district}`,
+
                 text:
                     `Hello ${user.name || "User"},\n\n` +
                     `A HIGH flood risk has been predicted for ${district}.\n\n` +
@@ -59,9 +96,16 @@ async function sendHighRiskAlert(district, prediction) {
                     `FloodGuard AI`
             });
 
-            console.log(`HIGH-risk alert sent to ${user.email} for ${district}.`);
+            console.log(
+                `HIGH-risk alert sent to ${user.email} for ${district}.`
+            );
+
         } catch (error) {
-            console.error(`Unable to send alert to ${user.email}:`, error.message);
+
+            console.error(
+                `Unable to send alert to ${user.email}:`,
+                error.message
+            );
         }
     }
 }

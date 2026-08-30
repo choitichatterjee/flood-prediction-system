@@ -15,6 +15,9 @@ const {
 } = require("./weatherService");
 
 const app = express();
+const {
+    sendHighRiskAlert
+} = require("../notification/notificationService");
 
 const PORT = process.env.PORT || 5000;
 
@@ -38,14 +41,6 @@ try {
     );
 
 }
-
-
-// ======================================================
-// NOTIFICATION SERVICE
-// ======================================================
-
-const { sendHighRiskAlert } = require("../notification/notificationService");
-
 
 // ======================================================
 // MIDDLEWARE
@@ -920,7 +915,7 @@ app.post("/api/predict", async (req, res) => {
 
         pythonProcess.on(
             "close",
-            (code) => {
+            async (code) => {
 
                 console.log(
                     "Prediction Python process closed:",
@@ -974,6 +969,15 @@ app.post("/api/predict", async (req, res) => {
                         prediction
                     );
 
+                    // HIGH-RISK EMAIL ALERT
+                    
+                    const district = inputData.district;
+                    if (district) {
+                         await sendHighRiskAlert(
+                            district,
+                            prediction
+                        );
+                    }
 
                     res.json({
 
