@@ -114,12 +114,11 @@ def fetch_live_data(location_id):
                 "details": response.text[:1000]
             }
 
-        except requests.exceptions.RequestException as e:
-            return {
+    except requests.exceptions.RequestException as e:
+        return {
             "error": "Could not connect to backend.",
             "details": str(e)
-            }
-```
+        }
 
 
 def run_prediction(payload):
