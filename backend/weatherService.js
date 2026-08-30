@@ -13,8 +13,7 @@
 //
 // --------------------------------------------------
 
-const { execFile } = require("child_process");
-
+const axios = require("axios");
 
 // --------------------------------------------------
 // FETCH LIVE WEATHER DATA
@@ -83,55 +82,33 @@ function getWeatherData(location) {
         // FETCH USING POWERSHELL
         // --------------------------------------------------
 
-        execFile(
-            "powershell.exe",
+        // --------------------------------------------------
+        // FETCH USING AXIOS
+        // --------------------------------------------------
+        // Axios works on both Windows and Linux/Render.
+    // This avoids depending on PowerShell.
+    // --------------------------------------------------
 
-            [
-                "-NoProfile",
-                "-Command",
-                `Invoke-RestMethod -Uri '${url}' -Method GET | ConvertTo-Json -Compress`
-            ],
+        axios.get(url, {
+            timeout: 20000
+            })
+        .then(response => {
 
-            {
-                timeout: 20000,
-                maxBuffer: 5 * 1024 * 1024
-            },
+            console.log("Open-Meteo data received successfully.");
 
-            (error, stdout, stderr) => {
+            resolve(response.data);
 
-                if (error) {
+        })
+        .catch(error => {
 
-                    console.error(
-                        "Open-Meteo PowerShell error:",
-                        stderr || error.message
-                    );
+            console.error(
+                "Open-Meteo request error:",
+                error.message
+            );
 
-                    return reject(error);
-                }
+            reject(error);
 
-
-                // --------------------------------------------------
-                // PARSE RESPONSE
-                // --------------------------------------------------
-
-                try {
-
-                    const data = JSON.parse(stdout);
-
-                    resolve(data);
-
-                } catch (parseError) {
-
-                    console.error(
-                        "Unable to parse Open-Meteo response:",
-                        parseError.message
-                    );
-
-                    reject(parseError);
-                }
-
-            }
-        );
+}       );
 
     });
 
