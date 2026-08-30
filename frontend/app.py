@@ -22,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-BACKEND_URL = "http://localhost:5000"
+BACKEND_URL = "https://flood-prediction-system-ew0d.onrender.com"
 LOGIN_BG_URL = "https://t4.ftcdn.net/jpg/20/84/78/43/360_F_2084784353_zIzvolI5TGX9BbgYHDOHYkL9GnvYUOQH.jpg"
 
 LOCATIONS = {
@@ -109,9 +109,11 @@ def get_db_connection():
     try:
         return mysql.connector.connect(
             host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT", 21914)),
             user=os.getenv("DB_USER"),
             password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME")
+            database=os.getenv("DB_NAME"),
+            ssl_disabled=False
         )
     except mysql.connector.Error as error:
         st.error(f"Database connection failed: {error}")
