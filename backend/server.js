@@ -586,10 +586,12 @@ app.get("/api/data", async (req, res) => {
 
             if (floodPrediction && floodPrediction.riskLevel === "HIGH") {
 
-                await sendHighRiskAlert(
+                sendHighRiskAlert(
                     location.district,
                     floodPrediction
-                );
+                ).catch((error) => {
+                    console.error("Background notification error:", error.message);
+                });
 
             }
 
