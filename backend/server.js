@@ -973,6 +973,11 @@ app.post("/api/predict", async (req, res) => {
                     
                     const district = inputData.district;
                     if (district) {
+                        console.log("NOTIFICATION CHECK:", {
+                            district: district,
+                            riskLevel: prediction?.riskLevel,
+                            prediction: prediction
+                        });
                          await sendHighRiskAlert(
                             district,
                             prediction
