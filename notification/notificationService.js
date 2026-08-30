@@ -1,6 +1,7 @@
 const nodemailer = require("nodemailer");
 const pool = require("../backend/db");
-require("dotenv").config({ path: path.join(__dirname, "../backend/.env") });
+
+require("dotenv").config();
 
 /*
  * Get all users registered in MySQL for a particular district.
