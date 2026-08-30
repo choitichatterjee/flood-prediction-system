@@ -91,7 +91,6 @@ def check_backend():
     try: return requests.get(f"{BACKEND_URL}/", timeout=10).json()
     except Exception as e: return {"error": str(e)}
 
-```python
 def fetch_live_data(location_id):
     try:
         response = requests.get(
