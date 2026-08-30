@@ -1,23 +1,13 @@
-const mysql = require("mysql2/promise");
 const nodemailer = require("nodemailer");
-const path = require("path");
+const pool = require("../backend/db");
 require("dotenv").config({ path: path.join(__dirname, "../backend/.env") });
 
 /*
  * Get all users registered in MySQL for a particular district.
  */
 async function getUsersByDistrict(district) {
-    let connection;
-
     try {
-        connection = await mysql.createConnection({
-            host: process.env.DB_HOST,
-            user: process.env.DB_USER,
-            password: process.env.DB_PASSWORD,
-            database: process.env.DB_NAME
-        });
-
-        const [users] = await connection.execute(
+        const [users] = await pool.execute(
             `
             SELECT name, email, district
             FROM users
@@ -29,16 +19,14 @@ async function getUsersByDistrict(district) {
         return users;
 
     } catch (error) {
-        console.error("Unable to read users from MySQL:", error.message);
-        return [];
+        console.error(
+            "Unable to read users from MySQL:",
+            error.message
+        );
 
-    } finally {
-        if (connection) {
-            await connection.end();
-        }
+        return [];
     }
 }
-
 
 /*
  * Send email alerts only when the predicted risk is HIGH.
