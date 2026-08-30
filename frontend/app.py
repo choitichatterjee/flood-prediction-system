@@ -1,5 +1,12 @@
 import json
+import os
+import mysql.connector
+from dotenv import load_dotenv
 from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / "backend" / ".env")
 
 import pandas as pd
 import requests
@@ -40,12 +47,6 @@ if "environmental_data" not in st.session_state:
     st.session_state.environmental_data = None
 if "prediction" not in st.session_state:
     st.session_state.prediction = None
-
-# Mock Database
-if "user_db" not in st.session_state:
-    st.session_state.user_db = {
-        "admin@floodguard.ai": {"password": "adminpassword", "name": "System Admin", "district": "Jalpaiguri"}
-    }
 
 # ============================================================
 # GLOBAL CSS
@@ -104,6 +105,18 @@ def get_value(data, possible_keys):
         if key in data and data[key] is not None: return data[key]
     return None
 
+def get_db_connection():
+    try:
+        return mysql.connector.connect(
+            host=os.getenv("DB_HOST"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            database=os.getenv("DB_NAME")
+        )
+    except mysql.connector.Error as error:
+        st.error(f"Database connection failed: {error}")
+        return None
+
 def safe_float(value, default=0.0):
     try: return float(value) if value is not None else default
     except (ValueError, TypeError): return default
@@ -113,31 +126,44 @@ def format_value(data, unit=""):
     try: return f"{float(data):.2f} {unit}"
     except (ValueError, TypeError): return f"{data} {unit}"
 
-def save_notification_user(name, email, district):
-    """Save only the information needed for flood email alerts."""
-    users_file = Path(__file__).resolve().parent.parent / "notification" / "users.json"
+def register_user(name, email, password, district):
+    """Store a newly registered user permanently in MySQL."""
+    connection = get_db_connection()
+
+    if connection is None:
+        return False, "Could not connect to database."
 
     try:
-        users_file.parent.mkdir(parents=True, exist_ok=True)
-        if users_file.exists():
-            with users_file.open("r", encoding="utf-8") as file:
-                users = json.load(file)
-        else:
-            users = []
+        cursor = connection.cursor()
 
-        if not any(user.get("email", "").lower() == email.lower() for user in users):
-            users.append({
-                "name": name,
-                "email": email,
-                "district": district
-            })
-            with users_file.open("w", encoding="utf-8") as file:
-                json.dump(users, file, indent=4)
-        return True
-    except Exception as error:
-        st.error(f"Could not save notification details: {error}")
-        return False
+        # Check whether the email already exists
+        cursor.execute(
+            "SELECT email FROM users WHERE email = %s",
+            (email,)
+        )
 
+        if cursor.fetchone():
+            return False, "Email already registered."
+
+        # Insert the new user
+        cursor.execute(
+            """
+            INSERT INTO users (name, email, password, district)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (name, email, password, district)
+        )
+
+        connection.commit()
+
+        return True, "Account created successfully."
+
+    except mysql.connector.Error as error:
+        return False, f"Registration failed: {error}"
+
+    finally:
+        cursor.close()
+        connection.close()
 # ============================================================
 # LOGIN PAGE COMPONENT
 # ============================================================
@@ -161,35 +187,119 @@ def login_page():
 
         with tab_login:
             login_email = st.text_input("Email", key="login_email")
-            login_pass = st.text_input("Password", type="password", key="login_pass")
-            selected_district = st.selectbox("📍 Select Initial Location", list(LOCATIONS.keys()), key="login_district")
+            login_pass = st.text_input(
+                "Password",
+                type="password",
+                key="login_pass"
+            )
+            selected_district = st.selectbox(
+                "📍 Select Initial Location",
+                list(LOCATIONS.keys()),
+                key="login_district"
+            )
 
             if st.button("Login", use_container_width=True):
-                user_db = st.session_state.user_db
-                if login_email in user_db and user_db[login_email]["password"] == login_pass:
-                    st.session_state.logged_in = True
-                    st.session_state.selected_district = selected_district
-                    st.session_state.user_info = {
-                        "email": login_email,
-                        "name": user_db[login_email]["name"]
-                    }
-                    st.rerun() 
+
+                connection = get_db_connection()
+
+                if connection is None:
+                    st.error("Unable to connect to database.")
+
                 else:
-                    st.error("Invalid email or password.")
+                    cursor = None
+
+                    try:
+                        cursor = connection.cursor(dictionary=True)
+
+                        # Find the registered user by email
+                        cursor.execute(
+                            """
+                            SELECT id, name, email, district, password
+                            FROM users
+                            WHERE email = %s
+                            """,
+                            (login_email.strip(),)
+                        )
+
+                        user = cursor.fetchone()
+
+                        if user and user["password"] == login_pass:
+
+                            st.session_state.logged_in = True
+
+                            # Use the district stored in MySQL
+                            st.session_state.selected_district = user["district"]
+
+                            st.session_state.user_info = {
+                                "email": user["email"],
+                                "name": user["name"],
+                                "district": user["district"]
+                            }
+
+                            st.rerun()
+
+                        else:
+                            st.error("Invalid email or password.")
+
+                    except mysql.connector.Error as error:
+                        st.error(f"Login failed: {error}")
+
+                    finally:
+                        if cursor:
+                            cursor.close()
+
+                        connection.close()
 
         with tab_signup:
-            signup_name = st.text_input("Full Name", key="signup_name")
-            signup_email = st.text_input("Email", key="signup_email")
-            signup_pass = st.text_input("Password", type="password", key="signup_pass")
-            signup_dist = st.selectbox("📍 Select Location", list(LOCATIONS.keys()), key="signup_dist")
+            signup_name = st.text_input(
+                "Full Name",
+                key="signup_name"
+            )
+
+            signup_email = st.text_input(
+                "Email",
+                key="signup_email"
+            )
+
+            signup_pass = st.text_input(
+                "Password",
+                type="password",
+                key="signup_pass"
+            )
+
+            signup_dist = st.selectbox(
+                "📍 Select Location",
+                list(LOCATIONS.keys()),
+                key="signup_dist"
+            )
 
             if st.button("Register", use_container_width=True):
-                if signup_email in st.session_state.user_db:
-                    st.error("Email already registered.")
+
+                if not signup_name.strip():
+                    st.error("Please enter your name.")
+
+                elif not signup_email.strip():
+                    st.error("Please enter your email.")
+
+                elif not signup_pass:
+                    st.error("Please enter a password.")
+
                 else:
-                    if save_notification_user(signup_name, signup_email, signup_dist):
-                        st.session_state.user_db[signup_email] = {"password": signup_pass, "name": signup_name, "district": signup_dist}
-                        st.success("Account created! Switch tabs to login.")
+
+                    success, message = register_user(
+                        signup_name.strip(),
+                        signup_email.strip(),
+                        signup_pass,
+                        signup_dist
+                    )
+
+                    if success:
+                        st.success(
+                            "Account created! Switch to the Login tab."
+                        )
+
+                    else:
+                        st.error(message)
 
 # ============================================================
 # DASHBOARD PAGE COMPONENT
